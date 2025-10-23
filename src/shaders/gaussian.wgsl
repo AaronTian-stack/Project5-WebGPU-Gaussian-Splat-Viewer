@@ -14,7 +14,6 @@ struct RenderSettings {
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    //TODO: information passed from vertex shader to fragment shader
     @location(0) color: vec4<f32>,
     @location(1) pixel_center: vec2<f32>,
     @location(2) conic: vec3<f32>,

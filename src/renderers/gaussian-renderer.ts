@@ -228,7 +228,7 @@ export default function get_renderer(
     },
     primitive: {
       topology: 'triangle-list',
-      cullMode: 'back',
+      cullMode: 'none',
       frontFace: 'ccw',
     }
   });
@@ -304,7 +304,6 @@ export default function get_renderer(
 
       encoder.copyBufferToBuffer(null_buffer, 0, sorter.sort_info_buffer, 0, 4); // Clear keys_size to 0
       encoder.copyBufferToBuffer(null_buffer, 0, sorter.sort_dispatch_indirect_buffer, 0, 4); // Clear dispatch_x to 0
-      // encoder.copyBufferToBuffer(null_buffer, 0, indirect_draw_buffer, 4, 4); // Set instance count to 0
 
       preprocess_func(encoder);
       

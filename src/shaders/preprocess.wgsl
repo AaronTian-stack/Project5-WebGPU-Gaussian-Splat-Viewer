@@ -61,8 +61,6 @@ struct Splat {
     conic: array<u32, 2>, // 4 f16. cov + radius
 };
 
-//TODO: bind your data here
-
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> render_settings: RenderSettings;
 
@@ -83,7 +81,8 @@ fn fast_modulo(a: u32, b: u32) -> u32 {
 fn sh_coef(splat_idx: u32, c_idx: u32) -> vec3<f32> {
     // 16 max coefficients, each is f16 so 8*3 for 3 channels
     // Offset by coefficient, divide by 2 for f16. Then get color in that coefficient
-    let base_idx = splat_idx * 24 + (c_idx / 2) * 3 + fast_modulo(c_idx, 2);
+    let channel = fast_modulo(c_idx, 2);
+    let base_idx = splat_idx * 24 + (c_idx / 2) * 3 + channel;
 
     let color01 = unpack2x16float(sh_coeffs[base_idx + 0]);
     let color23 = unpack2x16float(sh_coeffs[base_idx + 1]);
@@ -134,7 +133,6 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     if (idx >= arrayLength(&gaussians)) {
         return;
     }
-    //TODO: set up pipeline as described in instruction
 
     // Transform Gaussian position to NDC for culling
     let gaussian = gaussians[idx];
@@ -155,7 +153,7 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     // Unpack rotation and scale
     let rot_WX = unpack2x16float(gaussian.rot[0]);
     let rot_YZ = unpack2x16float(gaussian.rot[1]);
-    let rot = vec4<f32>(rot_WX.x, rot_WX.y, rot_YZ.x, rot_YZ.y); // WXYZ quaternion
+    let rot = vec4<f32>(rot_WX.y, rot_YZ.x, rot_YZ.y, rot_WX.x); // XYZW quaternion
     
     let scale_0 = exp(unpack2x16float(gaussian.scale[0])); // scale_0, scale_1
     let scale_1 = exp(unpack2x16float(gaussian.scale[1])); // scale_2, padding
@@ -172,12 +170,12 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
         0.0, 0.0, render_settings.gaussian_scaling * scale.z
     );
 
-    // let cov3D = R * S * transpose(R * S);
     let cov3D = transpose(S * R) * S * R;
 
+    let t = view_pos.xyz;
     let J = mat3x3<f32>(
-        camera.focal.x / view_pos.z, 0.0, -(camera.focal.x * view_pos.x) / (view_pos.z * view_pos.z),
-        0.0, camera.focal.y / view_pos.z, -(camera.focal.y * view_pos.y) / (view_pos.z * view_pos.z),
+        camera.focal.x / t.z, 0.0, -(camera.focal.x * t.x) / (t.z * t.z),
+        0.0, camera.focal.y / t.z, -(camera.focal.y * t.y) / (t.z * t.z),
         0.0, 0.0, 0.0
     );
 
@@ -191,7 +189,7 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
         cov3D[0][2], cov3D[1][2], cov3D[2][2]
     );
 
-    var cov2D = transpose(T) * Vrk * T;
+    var cov2D = transpose(T) * transpose(Vrk) * T;
     cov2D[0][0] += 0.3;
     cov2D[1][1] += 0.3;
 
@@ -226,10 +224,13 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     splats[splat_idx].conic[1] = pack2x16float(vec2<f32>(conic.z, radius));
 
     sort_indices[splat_idx] = splat_idx;
-    let A = camera.proj[2][2]; // (far + near) / (near - far)
-    let B = camera.proj[3][2]; // (2 * far * near) / (near - far)
-    let far_plane = B / (A + 1.0); 
-    sort_depths[splat_idx] = bitcast<u32>(far_plane - view_pos.z); // Sort far to near to rasterize back to front. Bitcast to u32 for the sort
+
+    var depth_uint = bitcast<u32>(-view_pos.z);
+    // Flip bits for sorting in radix
+    // If sign bit is set (negative), flip all bits
+    // If sign bit is not set (positive), flip only sign bit
+    let mask = select(0x80000000u, 0xFFFFFFFFu, (depth_uint & 0x80000000u) != 0u);
+    sort_depths[splat_idx] = depth_uint ^ mask;
 
     let keys_per_dispatch = workgroupSize * sortKeyPerThread; 
     // increment DispatchIndirect.dispatchx each time you reach limit for one dispatch of keys
